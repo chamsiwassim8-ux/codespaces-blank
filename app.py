@@ -714,6 +714,39 @@ metric_columns[1].metric(unit_label, f"{result['units']:,}")
 metric_columns[2].metric("Pallets required", f"{result['pallets']:,}" if result["pallets"] else "Not palletized")
 metric_columns[3].metric("Last unit utilization", f"{result['last_unit_utilization']:.1f}%")
 
+# --- 20' CONTAINER RECOMMENDATION BUBBLE ---
+if mode == "Container" and container_size == "40'" and result["last_unit_utilization"] < 80.0:
+    try:
+        lines_20ft = []
+        for line in shipment_lines:
+            cap_20 = get_capacity(
+                load_sheet,
+                mode="Container",
+                size=line.product.size,
+                with_spoon_cap=line.with_spoon_cap,
+                packing=packing,
+                container_size="20'",
+                container_type=container_type,
+            )
+            lines_20ft.append(
+                ShipmentLine(
+                    product=line.product,
+                    quantity=line.quantity,
+                    with_spoon_cap=line.with_spoon_cap,
+                    capacity=cap_20,
+                )
+            )
+        res_20 = calculate_shipment(lines_20ft, mode="Container", packing=packing)
+        
+        st.info(
+            f"💡 **Optimization Suggestion:** The last 40' container utilization is below 80% "
+            f"({result['last_unit_utilization']:.1f}%).\n\n"
+            f"Switching to **20' {container_type}** containers would require **{res_20['units']} container(s)** "
+            f"with a last unit utilization of **{res_20['last_unit_utilization']:.1f}%**."
+        )
+    except ValueError:
+        pass
+
 line_summary = []
 for line in shipment_lines:
     if result["palletized"]:
@@ -770,26 +803,13 @@ if mode == "Container":
         with st.container(border=True):
             st.markdown(f"**Container #{container_number} · {container_size} {container_type} · {status}**")
             detail_columns = st.columns(3)
-            detail_columns[0].metric("Filling rate", f"{fill_rate:.1f}%")
-            detail_columns[1].metric(
-                "Tins / maximum capacity",
-                f"{container['total_tins']:,} / {container['max_capacity_tins']:,.0f}",
-            )
-            if packing == "Palletized":
-                detail_columns[2].metric(
-                    "Pallets used / maximum",
-                    f"{container['pallets_used']} / {container['pallets_max']}",
-                )
+            detail_columns[0].metric("Fill rate", f"{fill_rate:.1f}%")
+            detail_columns[1].metric("Total tins", f"{container['total_tins']:,}")
+            if container["pallets_used"] is not None:
+                detail_columns[2].metric("Pallets used", f"{container['pallets_used']} / {container['pallets_max']}")
             else:
-                detail_columns[2].metric("Pallets", "Not palletized")
-            st.progress(fill_rate / 100, text=f"{fill_rate:.1f}% filled · {status}")
-            st.dataframe(
-                list(container["items"].values()),
-                hide_index=True,
-                width="stretch",
-            )
-            remaining_capacity = max(
-                0,
-                container["max_capacity_tins"] - container["total_tins"],
-            )
-            st.caption(f"Remaining capacity: {remaining_capacity:,.0f} tins")
+                detail_columns[2].metric("Max capacity", f"{int(container['max_capacity_tins']):,} tins")
+            st.progress(fill_rate / 100, text=f"Utilization: {fill_rate:.1f}%")
+
+            item_list = list(container["items"].values())
+            st.dataframe(item_list, hide_index=True, width="stretch")
