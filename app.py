@@ -120,6 +120,10 @@ def get_capacity(
 ) -> Capacity:
     size_index = 0 if size == "400" else 1
     if mode == "Container":
+        # Fallback: 20' HC does not exist in sheet, use 20' DV instead
+        if container_size == "20'" and container_type == "HC":
+            container_type = "DV"
+
         columns = {
             ("20'", "Reefer"): (3, 4),
             ("20'", "DV"): (5, 6),
@@ -714,7 +718,7 @@ metric_columns[1].metric(unit_label, f"{result['units']:,}")
 metric_columns[2].metric("Pallets required", f"{result['pallets']:,}" if result["pallets"] else "Not palletized")
 metric_columns[3].metric("Last unit utilization", f"{result['last_unit_utilization']:.1f}%")
 
-# --- PROMINENT 20' CONTAINER RECOMMENDATION BUBBLE ---
+# --- 20' CONTAINER RECOMMENDATION BUBBLE ---
 if mode == "Container" and container_size == "40'" and result["last_unit_utilization"] < 80.0:
     try:
         lines_20ft = []
@@ -746,7 +750,6 @@ if mode == "Container" and container_size == "40'" and result["last_unit_utiliza
             icon="💡"
         )
     except Exception as e:
-        # Temporarily show if there's a lookup issue in the Excel grid
         st.caption(f"*(Note: 20' alternative comparison unavailable for this specific configuration: {e})*")
 
 line_summary = []
