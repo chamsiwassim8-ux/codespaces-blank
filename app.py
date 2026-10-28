@@ -26,7 +26,7 @@ class Product:
 
     @property
     def default_spoon_cap(self) -> bool:
-        return bool(re.search(r"ultima|ultimate", self.description, re.I))
+        return bool(re.search(r"ultima|ultimate|primasure", self.description, re.I))
 
     @property
     def label(self) -> str:
