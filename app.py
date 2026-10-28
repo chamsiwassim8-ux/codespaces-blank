@@ -714,7 +714,7 @@ metric_columns[1].metric(unit_label, f"{result['units']:,}")
 metric_columns[2].metric("Pallets required", f"{result['pallets']:,}" if result["pallets"] else "Not palletized")
 metric_columns[3].metric("Last unit utilization", f"{result['last_unit_utilization']:.1f}%")
 
-# --- 20' CONTAINER RECOMMENDATION BUBBLE ---
+# --- PROMINENT 20' CONTAINER RECOMMENDATION BUBBLE ---
 if mode == "Container" and container_size == "40'" and result["last_unit_utilization"] < 80.0:
     try:
         lines_20ft = []
@@ -738,14 +738,16 @@ if mode == "Container" and container_size == "40'" and result["last_unit_utiliza
             )
         res_20 = calculate_shipment(lines_20ft, mode="Container", packing=packing)
         
-        st.info(
-            f"💡 **Optimization Suggestion:** The last 40' container utilization is below 80% "
-            f"({result['last_unit_utilization']:.1f}%).\n\n"
-            f"Switching to **20' {container_type}** containers would require **{res_20['units']} container(s)** "
-            f"with a last unit utilization of **{res_20['last_unit_utilization']:.1f}%**."
+        st.warning(
+            f"📦 **Container Optimization Suggestion:** Your last 40' container is under-utilized "
+            f"at **{result['last_unit_utilization']:.1f}%**.\n\n"
+            f"💡 Switching to **20' {container_type}** containers would require **{res_20['units']} container(s)** "
+            f"with a revised last-unit utilization of **{res_20['last_unit_utilization']:.1f}%**.",
+            icon="💡"
         )
-    except ValueError:
-        pass
+    except Exception as e:
+        # Temporarily show if there's a lookup issue in the Excel grid
+        st.caption(f"*(Note: 20' alternative comparison unavailable for this specific configuration: {e})*")
 
 line_summary = []
 for line in shipment_lines:
