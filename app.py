@@ -725,37 +725,88 @@ metric_columns[1].metric(unit_label, f"{result['units']:,}")
 metric_columns[2].metric("Pallets required", f"{result['pallets']:,}" if result["pallets"] else "Not palletized")
 metric_columns[3].metric("Last unit utilization", f"{result['last_unit_utilization']:.1f}%")
 
-# --- 20' CONTAINER RECOMMENDATION BUBBLE ---
+# --- 20' CONTAINER RECOMMENDATION BUBBLE (LAST CONTAINER ONLY) ---
 if mode == "Container" and container_size == "40'" and result["last_unit_utilization"] < 80.0:
     try:
-        lines_20ft = []
-        for line in shipment_lines:
-            cap_20 = get_capacity(
+        # Calculate how many tins/pallets total were needed before the last container
+        total_units_needed = result["units"]
+        
+        if result["palletized"]:
+            # For palletized: find how many pallet positions were in use by the last unit
+            pallets_in_last = result["remaining_pallet_positions"] if result["remaining_pallet_positions"] > 0 else result["pallet_positions"]
+            # Actually, pallets_in_last_unit = total_pallets - pallet_positions * (units - 1)
+            pallets_in_last_unit = result["pallets"] - result["pallet_positions"] * (total_units_needed - 1)
+            if pallets_in_last_unit <= 0:
+                pallets_in_last_unit = result["pallet_positions"]
+            
+            # Test fitting these last pallets into a 20' container of the same type/product mix
+            # We check the 20' pallet capacity for the product(s)
+            mixed_mass_20 = result["mixed_mass"]
+            
+            # Get 20' capacities for the lines
+            lines_20ft_sample = []
+            for line in shipment_lines:
+                cap_20 = get_capacity(
+                    load_sheet,
+                    mode="Container",
+                    size=line.product.size,
+                    with_spoon_cap=line.with_spoon_cap,
+                    packing=packing,
+                    container_size="20'",
+                    container_type=container_type,
+                )
+                lines_20ft_sample.append(cap_20)
+            
+            pallet_positions_20 = (
+                max(cap.pallets_per_unit for cap in lines_20ft_sample)
+                if mixed_mass_20
+                else min(cap.pallets_per_unit for cap in lines_20ft_sample)
+            )
+            if mixed_mass_20:
+                pallet_positions_20 -= 1
+                
+            util_20_last = (pallets_in_last_unit / pallet_positions_20) * 100
+            
+            st.warning(
+                f"📦 **Container Optimization Suggestion:** Your last 40' container is under-utilized "
+                f"at **{result['last_unit_utilization']:.1f}%**.\n\n"
+                f"💡 Instead of a 40' container for the final spillover, replacing **just the last container** "
+                f"with a **20' {container_type}** would hold those remaining pallets at a higher fill rate of **{util_20_last:.1f}%**.",
+                icon="💡"
+            )
+        else:
+            # For non-palletized: find the remaining tins in the last 40' container
+            # First, calculate total capacity of one 40' container for the main product
+            cap_40_tins = shipment_lines[0].capacity.tins_per_unit
+            total_tins_all = sum(line.quantity for line in shipment_lines)
+            
+            # Tins in the last container
+            tins_in_last = total_tins_all - cap_40_tins * (total_units_needed - 1)
+            if tins_in_last <= 0:
+                tins_in_last = cap_40_tins
+                
+            # Get 20' capacity for the product line
+            cap_20_tins = get_capacity(
                 load_sheet,
                 mode="Container",
-                size=line.product.size,
-                with_spoon_cap=line.with_spoon_cap,
+                size=shipment_lines[0].product.size,
+                with_spoon_cap=shipment_lines[0].with_spoon_cap,
                 packing=packing,
                 container_size="20'",
                 container_type=container_type,
+            ).tins_per_unit
+            
+            util_20_last = (tins_in_last / cap_20_tins) * 100
+            
+            st.warning(
+                f"📦 **Container Optimization Suggestion:** Your last 40' container is under-utilized "
+                f"at **{result['last_unit_utilization']:.1f}%** ({result.get('remaining_tins', 'N/A')} unfilled capacity).\n\n"
+                f"💡 Replacing **just the final 40' container** with a **20' {container_type}** container "
+                f"would achieve a much healthier fill rate of **{util_20_last:.1f}%** for the remaining goods.",
+                icon="💡"
             )
-            lines_20ft.append(
-                ShipmentLine(
-                    product=line.product,
-                    quantity=line.quantity,
-                    with_spoon_cap=line.with_spoon_cap,
-                    capacity=cap_20,
-                )
-            )
-        res_20 = calculate_shipment(lines_20ft, mode="Container", packing=packing)
-        
-        st.warning(
-            f"📦 **Container Optimization Suggestion:** Your last 40' container is under-utilized "
-            f"at **{result['last_unit_utilization']:.1f}%**.\n\n"
-            f"💡 Switching to **20' {container_type}** containers would require **{res_20['units']} container(s)** "
-            f"with a revised last-unit utilization of **{res_20['last_unit_utilization']:.1f}%**.",
-            icon="💡"
-        )
+    except Exception as e:
+        st.caption(f"*(Note: 20' alternative comparison unavailable for this specific configuration: {e})*")
     except Exception as e:
         st.caption(f"*(Note: 20' alternative comparison unavailable for this specific configuration: {e})*")
 
