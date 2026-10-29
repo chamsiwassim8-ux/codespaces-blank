@@ -330,7 +330,7 @@ def distribute_containers(
         return containers
 
     if pallet_positions is None or pallet_positions <= 0:
-        raise ValueError("Pallet capacity is missing for this container.")
+        raise ValueError("Pallet capacity is missing for this unit.")
 
     pallet_groups: dict[tuple[int | None, str | None, bool], list[int]] = {}
     for line_index, line in enumerate(lines):
@@ -708,6 +708,9 @@ capacity_categories = {
 if mode == "Container" and packing == "Palletized":
     capacity_label = "Pallet positions per load"
     capacity_value = f"{result['pallet_positions']:,}"
+elif mode == "Truck":
+    capacity_label = "Pallet positions per truck"
+    capacity_value = f"{result['pallet_positions']:,}"
 else:
     capacity_label = {
         "Container": "Tins per container",
@@ -725,88 +728,37 @@ metric_columns[1].metric(unit_label, f"{result['units']:,}")
 metric_columns[2].metric("Pallets required", f"{result['pallets']:,}" if result["pallets"] else "Not palletized")
 metric_columns[3].metric("Last unit utilization", f"{result['last_unit_utilization']:.1f}%")
 
-# --- 20' CONTAINER RECOMMENDATION BUBBLE (LAST CONTAINER ONLY) ---
+# --- 20' CONTAINER RECOMMENDATION BUBBLE ---
 if mode == "Container" and container_size == "40'" and result["last_unit_utilization"] < 80.0:
     try:
-        # Calculate how many tins/pallets total were needed before the last container
-        total_units_needed = result["units"]
-        
-        if result["palletized"]:
-            # For palletized: find how many pallet positions were in use by the last unit
-            pallets_in_last = result["remaining_pallet_positions"] if result["remaining_pallet_positions"] > 0 else result["pallet_positions"]
-            # Actually, pallets_in_last_unit = total_pallets - pallet_positions * (units - 1)
-            pallets_in_last_unit = result["pallets"] - result["pallet_positions"] * (total_units_needed - 1)
-            if pallets_in_last_unit <= 0:
-                pallets_in_last_unit = result["pallet_positions"]
-            
-            # Test fitting these last pallets into a 20' container of the same type/product mix
-            # We check the 20' pallet capacity for the product(s)
-            mixed_mass_20 = result["mixed_mass"]
-            
-            # Get 20' capacities for the lines
-            lines_20ft_sample = []
-            for line in shipment_lines:
-                cap_20 = get_capacity(
-                    load_sheet,
-                    mode="Container",
-                    size=line.product.size,
-                    with_spoon_cap=line.with_spoon_cap,
-                    packing=packing,
-                    container_size="20'",
-                    container_type=container_type,
-                )
-                lines_20ft_sample.append(cap_20)
-            
-            pallet_positions_20 = (
-                max(cap.pallets_per_unit for cap in lines_20ft_sample)
-                if mixed_mass_20
-                else min(cap.pallets_per_unit for cap in lines_20ft_sample)
-            )
-            if mixed_mass_20:
-                pallet_positions_20 -= 1
-                
-            util_20_last = (pallets_in_last_unit / pallet_positions_20) * 100
-            
-            st.warning(
-                f"📦 **Container Optimization Suggestion:** Your last 40' container is under-utilized "
-                f"at **{result['last_unit_utilization']:.1f}%**.\n\n"
-                f"💡 Instead of a 40' container for the final spillover, replacing **just the last container** "
-                f"with a **20' {container_type}** would hold those remaining pallets at a higher fill rate of **{util_20_last:.1f}%**.",
-                icon="💡"
-            )
-        else:
-            # For non-palletized: find the remaining tins in the last 40' container
-            # First, calculate total capacity of one 40' container for the main product
-            cap_40_tins = shipment_lines[0].capacity.tins_per_unit
-            total_tins_all = sum(line.quantity for line in shipment_lines)
-            
-            # Tins in the last container
-            tins_in_last = total_tins_all - cap_40_tins * (total_units_needed - 1)
-            if tins_in_last <= 0:
-                tins_in_last = cap_40_tins
-                
-            # Get 20' capacity for the product line
-            cap_20_tins = get_capacity(
+        lines_20ft = []
+        for line in shipment_lines:
+            cap_20 = get_capacity(
                 load_sheet,
                 mode="Container",
-                size=shipment_lines[0].product.size,
-                with_spoon_cap=shipment_lines[0].with_spoon_cap,
+                size=line.product.size,
+                with_spoon_cap=line.with_spoon_cap,
                 packing=packing,
                 container_size="20'",
                 container_type=container_type,
-            ).tins_per_unit
-            
-            util_20_last = (tins_in_last / cap_20_tins) * 100
-            
-            st.warning(
-                f"📦 **Container Optimization Suggestion:** Your last 40' container is under-utilized "
-                f"at **{result['last_unit_utilization']:.1f}%** ({result.get('remaining_tins', 'N/A')} unfilled capacity).\n\n"
-                f"💡 Replacing **just the final 40' container** with a **20' {container_type}** container "
-                f"would achieve a much healthier fill rate of **{util_20_last:.1f}%** for the remaining goods.",
-                icon="💡"
             )
-    except Exception as e:
-        st.caption(f"*(Note: 20' alternative comparison unavailable for this specific configuration: {e})*")
+            lines_20ft.append(
+                ShipmentLine(
+                    product=line.product,
+                    quantity=line.quantity,
+                    with_spoon_cap=line.with_spoon_cap,
+                    capacity=cap_20,
+                )
+            )
+        res_20 = calculate_shipment(lines_20ft, mode="Container", packing=packing)
+        
+        st.warning(
+            f"📦 **Container Optimization Suggestion:** Your last 40' container is under-utilized "
+            f"at **{result['last_unit_utilization']:.1f}%**.\n\n"
+            f"💡 Switching to **20' {container_type}** containers would require **{res_20['units']} container(s)** "
+            f"with a revised last-unit utilization of **{res_20['last_unit_utilization']:.1f}%**.",
+            icon="💡"
+        )
     except Exception as e:
         st.caption(f"*(Note: 20' alternative comparison unavailable for this specific configuration: {e})*")
 
@@ -832,7 +784,7 @@ st.dataframe(line_summary, hide_index=True, width="stretch")
 if result["mixed_mass"]:
     st.info(
         "Mixed masses use separate pallets. One pallet position is deducted from each "
-        "palletized container's capacity."
+        "palletized load unit's capacity."
     )
 
 if result["palletized"]:
@@ -847,11 +799,13 @@ else:
 st.markdown(f"**{remaining_label}:** {remaining_value}")
 st.progress(result["last_unit_utilization"] / 100, text=f"Last load: {result['last_unit_utilization']:.1f}% utilized")
 
-if mode == "Container":
+# --- UNIT-BY-UNIT BREAKDOWN (Containers & Trucks) ---
+if mode in {"Container", "Truck"}:
     try:
-        container_plan = distribute_containers(
+        packing_type = packing if mode == "Container" else "Palletized"
+        unit_plan = distribute_containers(
             shipment_lines,
-            packing,
+            packing_type,
             result["pallet_positions"],
         )
     except ValueError as exc:
@@ -859,20 +813,24 @@ if mode == "Container":
         st.stop()
 
     st.divider()
-    st.subheader("Container-by-container plan")
-    for container_number, container in enumerate(container_plan, start=1):
-        fill_rate = container["fill_rate"]
+    unit_title = "Container-by-container plan" if mode == "Container" else "Truck-by-truck plan"
+    unit_prefix = "Container" if mode == "Container" else "Truck"
+    unit_type_desc = f"{container_size} {container_type}" if mode == "Container" else truck_type
+
+    st.subheader(unit_title)
+    for unit_number, unit in enumerate(unit_plan, start=1):
+        fill_rate = unit["fill_rate"]
         status = "Full" if fill_rate >= 99.95 else "Partially filled"
         with st.container(border=True):
-            st.markdown(f"**Container #{container_number} · {container_size} {container_type} · {status}**")
+            st.markdown(f"**{unit_prefix} #{unit_number} · {unit_type_desc} · {status}**")
             detail_columns = st.columns(3)
             detail_columns[0].metric("Fill rate", f"{fill_rate:.1f}%")
-            detail_columns[1].metric("Total tins", f"{container['total_tins']:,}")
-            if container["pallets_used"] is not None:
-                detail_columns[2].metric("Pallets used", f"{container['pallets_used']} / {container['pallets_max']}")
+            detail_columns[1].metric("Total tins", f"{unit['total_tins']:,}")
+            if unit["pallets_used"] is not None:
+                detail_columns[2].metric("Pallets used", f"{unit['pallets_used']} / {unit['pallets_max']}")
             else:
-                detail_columns[2].metric("Max capacity", f"{int(container['max_capacity_tins']):,} tins")
+                detail_columns[2].metric("Max capacity", f"{int(unit['max_capacity_tins']):,} tins")
             st.progress(fill_rate / 100, text=f"Utilization: {fill_rate:.1f}%")
 
-            item_list = list(container["items"].values())
+            item_list = list(unit["items"].values())
             st.dataframe(item_list, hide_index=True, width="stretch")
