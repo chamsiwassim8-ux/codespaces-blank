@@ -385,9 +385,72 @@ def _load_source(uploaded_file: Any) -> tuple[list[Product], Any]:
 
 def _reset_spoon_cap(line_id: int) -> None:
     product = st.session_state[f"product_{line_id}"]
+    # Automatically update the selectbox state when product changes
     st.session_state[f"spoon_cap_{line_id}"] = (
         "with SpC" if product.default_spoon_cap else "without SpC"
     )
+
+# ... inside `with left:` under `else:` (Individual lines mode) ...
+else:
+    if "shipment_line_ids" not in st.session_state:
+        st.session_state.shipment_line_ids = [0]
+        st.session_state.next_shipment_line_id = 1
+        
+    for position, line_id in enumerate(list(st.session_state.shipment_line_ids), start=1):
+        product_key = f"product_{line_id}"
+        quantity_key = f"quantity_{line_id}"
+        spoon_cap_key = f"spoon_cap_{line_id}"
+        
+        st.session_state.setdefault(product_key, products[0])
+        st.session_state.setdefault(quantity_key, 10000)
+        
+        # Initialize SpC based on product default if not already set
+        initial_spc = "with SpC" if st.session_state[product_key].default_spoon_cap else "without SpC"
+        st.session_state.setdefault(spoon_cap_key, initial_spc)
+
+        product_column, quantity_column, spoon_cap_column, remove_column = st.columns(
+            [4.3, 1.4, 1.8, .8], vertical_alignment="bottom"
+        )
+        with product_column:
+            selected_product = st.selectbox(
+                f"Product {position}",
+                products,
+                format_func=lambda product: product.label,
+                key=product_key,
+                on_change=_reset_spoon_cap,
+                args=(line_id,),
+            )
+        with quantity_column:
+            quantity = st.number_input("Tins", min_value=1, step=1000, key=quantity_key)
+        with spoon_cap_column:
+            spoon_cap = st.selectbox("Spoon cap", ["with SpC", "without SpC"], key=spoon_cap_key)
+            
+        if len(st.session_state.shipment_line_ids) > 1 and remove_column.button(
+            "Remove", key=f"remove_{line_id}"
+        ):
+            st.session_state.shipment_line_ids.remove(line_id)
+            st.rerun()
+            
+        st.caption(
+            f"Mass: {selected_product.mass_g or 'Unknown'} g  |  "
+            f"SAP: {selected_product.sap_code or '-'}  |  "
+            f"Customer code: {selected_product.customer_code or '-'}  |  "
+            f"Auto SpC: {'with SpC' if selected_product.default_spoon_cap else 'without SpC'}"
+        )
+        product_specs.append((selected_product, int(quantity), spoon_cap == "with SpC"))
+
+    if st.button("Add another product", type="secondary"):
+        line_id = st.session_state.next_shipment_line_id
+        st.session_state.next_shipment_line_id += 1
+        st.session_state.shipment_line_ids.append(line_id)
+        
+        new_prod = products[0]
+        st.session_state[f"product_{line_id}"] = new_prod
+        st.session_state[f"quantity_{line_id}"] = 10000
+        st.session_state[f"spoon_cap_{line_id}"] = (
+            "with SpC" if new_prod.default_spoon_cap else "without SpC"
+        )
+        st.rerun()
 
 
 def _resolve_product(identifier: str, products: list[Product]) -> Product:
